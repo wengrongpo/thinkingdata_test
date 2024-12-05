@@ -24,7 +24,8 @@ class RccServer:
         self.__get_url=f'http://{kwargs.get('url','')}:8991/v1/remote-config/get'
         self.__success_event='te_ops_client_trigger_record'
         self.__debug_event='te_ops_client_debug_test'
-        self.__debug_url=f'http://{kwargs.get('url','')}:8991/data_debug?appid={self.__appid}&source=client&dryRun=0&deviceId={self.__device_id}'
+        self.__data_debug_url=f'http://{kwargs.get('url','')}:8991/data_debug?appid={self.__appid}&source=client&dryRun=0&deviceId={self.__device_id}'
+        self.__rcc_debug_url=f'http://{kwargs.get('url','')}:8991/v1/remote-config/debug'
         self.basic_info={              
             "#account_id": "wrp_sendtest",
             "#distinct_id": "wrp_sendtest",
@@ -295,18 +296,33 @@ class RccServer:
     
     @staticmethod
     def process_response(response, configId, templateCode, strategyId):
-        customParams = response['config'][configId]['#custom_params']
-        datas = response['config'][configId][templateCode]
+        
         try:
+            customParams = response['config'][configId]['#custom_params']
+            datas = response['config'][configId][templateCode]
             result = json.dumps(next(filter(lambda data: data['#strategy_id'] == strategyId, datas)), ensure_ascii=False)
         except:
-            print(f'策略{strategyId}可能已下线,{json.dumps(datas,ensure_ascii=False)}')
-            return
+            print(f'策略{strategyId}可能已下线,{json.dumps(response,ensure_ascii=False)}')
+            return False
         print(f"策略{strategyId}结果为：", result)
         print(f"自定义参数的结果为：", customParams)
         result_md5 = RccServer.process_result(result)
         print(f'策略内容的md5为:{result_md5}')  
+        return True
     
+    def debug_process_response(response, configId, templateCode):
+        try:
+            strateg_id=response['config'][configId][templateCode][0]['#strategy_id']         
+            print(f'策略{strateg_id}正在测试上线')
+            return strateg_id
+        except KeyError:
+            strategy_and_status=response['config']['#strategy_status_map'][configId][templateCode]
+            for key,value in strategy_and_status.items():
+                if value=='suspend':
+                    print(f'策略{key}正在测试暂停')
+                else:
+                    print(f'策略{key}正在测试下线')
+        # print('未进行发送测试或configId、templateCode有误')
     def getConfig(self,**kwargs):
         """获取远程配置
         
@@ -335,19 +351,74 @@ class RccServer:
         strategyId=kwargs.get('strategyId','')
         templateCode=kwargs.get('templateCode','')
         # 调用新封装的函数
-        RccServer.process_response(response,configId,templateCode, strategyId)
+        flag=RccServer.process_response(response,configId,templateCode, strategyId)
         
-        config_datas=response['config'][configId]
         if kwargs.get('is_validate','')==True:
+            config_datas=response['config'][configId]
             RccServer.validate_strategy_list(config_datas, kwargs.get('content_md5',''))
         
-        if kwargs.get('check_status','')==True:
-            strategyStatus=response['config']['#strategy_status_map'][configId][templateCode][strategyId]
-       
-        # 将json字符串转换为Python对象
         strategyStatus=response['config']['#strategy_status_map']
         
+        if kwargs.get('check_status','')==True:
+            try:
+                strategyStatus=response['config']['#strategy_status_map'][configId][templateCode][strategyId]
+            except:
+                if flag:print(f"策略{strategyId}的状态为：Online")
+                return
+        # 将json字符串转换为Python对象
+        
+        
         print(f"策略{strategyId}的状态为：",json.dumps(strategyStatus,ensure_ascii=False))
+        
+        
+        
+    def debugConfig(self,**kwargs):
+        """调试远程配置
+        
+        参数:
+            **kwargs: 可变关键字参数
+                configId (str): 配置ID
+                templateCode (str): 模板代码
+                show_error (bool): 是否显示错误信息
+                error_reason (int): 错误原因代码
+                
+        返回:
+            None
+            
+        功能:
+            - 调用远程配置调试接口
+            - 处理响应结果,获取任务ID
+            - 发送调试事件到服务器
+            - 打印调试信息和响应结果
+        """
+        configId=kwargs.get('configId','')
+        templateCode=kwargs.get('templateCode','')
+        response=self.rcc_request(self.__rcc_debug_url,self.__rcc_request_params,appid=self.__appid,device_id=self.__device_id)
+        taskId=RccServer.debug_process_response(response,configId,templateCode)
+        print("拉取到的任务ID:",taskId)
+
+        self.basic_info.update({"properties": {
+            "#device_id": self.__device_id,
+            "#lib": "Cpp",
+            "#lib_version": "1.3.6-beta.1",
+            "#os": "Windows",
+            "#rcc_pull_result": {
+                "business_type": "2",
+                "is_pull_success": True,
+                # "pull_fail_code": -6,
+                "ops_config_content":response['config']
+            },
+        },"#event_name": self.__debug_event})
+        
+        if kwargs.get('show_error')==True and kwargs.get('error_reason')!=None :self.basic_info['properties']['#rcc_pull_result']['pull_fail_code']=kwargs.get('error_reason')
+        payload = {
+            'data': f'{json.dumps(self.basic_info)}'
+        }
+        
+        response = requests.request("POST", self.__data_debug_url, data=payload)
+
+        print(response.text)
+ 
            
 if __name__=="__main__":
     rcc_server=RccServer(url='hermes-44.te.svc.cluster.local',appid='1b4b6a7bfb9f4a348ea7771e93b3e793',device_id='wrp0314')
@@ -356,5 +427,7 @@ if __name__=="__main__":
     # rcc_server.rcc_request_params['request_params']['#zone_offset']=9
     # rcc_server.rcc_request_params['request_params']['#simulator']=True
     rcc_server.rcc_request_params['request_params']['#account_id']='f50a6522-cbed-4707-a183-a5282fe53d66'
-       
-    rcc_server.getConfig(configId='rongpo_test',templateCode='rongpo_template',strategyId='44')
+    # rcc_server.rcc_request_params['last_fetch_time']=int(time.time()*1000)
+    rcc_server.rcc_request_params['last_fetch_time']=1729134000000
+    # rcc_server.getConfig(configId='rongpo_test',templateCode='rongpo_template',strategyId='67',check_status=True)
+    rcc_server.debugConfig(configId='rongpo_test',templateCode='rongpo_template')
