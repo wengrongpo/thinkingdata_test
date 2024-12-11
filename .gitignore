@@ -1,4 +1,6 @@
-thinkingdata_test.egg-info
+thinkingdata_test.egg-info/
 build/
 dist/
+.pypirc
 tests/
+rcc_server/__pycache__

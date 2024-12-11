@@ -10,7 +10,8 @@ def main():
     # 创建client
     # 使用 user_access_token 需开启 token 配置, 并在 request_option 中配置 token
     client = lark.Client.builder() \
-        .enable_set_token(True) \
+        .app_id("cli_a418d66f1239d00b") \
+        .app_secret("aCxi5ho5iKH1idoQjXoo2dWJE7DNNuH4") \
         .log_level(lark.LogLevel.DEBUG) \
         .build()
 
@@ -20,13 +21,12 @@ def main():
         .table_id("tblsAb7kyT7Hqffw") \
         .request_body(SearchAppTableRecordRequestBody.builder()
             .view_id("vew8EMZLNX") 
-            .field_names(["包含关键字", "告警来源组件","处理操作","时间间隔（min）","出现次数"])
+            .field_names(["包含关键字", "告警来源组件","公司名称","处理操作","时间间隔（min）","出现次数"])
             .build()) \
         .build()
 
     # 发起请求
-    option = lark.RequestOption.builder().user_access_token("u-feOza6kcVcNWeZIwhRqglNlg6Szw54nbjgG001e00Azb").build()
-    response: SearchAppTableRecordResponse = client.bitable.v1.app_table_record.search(request, option)
+    response: SearchAppTableRecordResponse = client.bitable.v1.app_table_record.search(request)
 
     # 处理失败返回
     if not response.success():
